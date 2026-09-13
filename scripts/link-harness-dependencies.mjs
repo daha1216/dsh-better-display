@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 
 const root = resolve(process.argv[2] || '');
-if (!process.argv[2] || !existsSync(join(root, 'package.json'))) throw new Error('Pass a prepared Harness checkout.');
+if (!process.argv[2] || !existsSync(join(root, 'tools/dshx/src/client-build.js'))) throw new Error('Pass a prepared Harness checkout.');
 const local = resolve('node_modules');
 mkdirSync(local, { recursive: true });
 const shared = {
