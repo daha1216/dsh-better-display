@@ -17,6 +17,8 @@ import { landTurn, scrollerOf } from './conversation-scroll.js';
 import { mergeTimelineItems, type TimelineItem } from './timeline.js';
 import type { ReaderGroup, TurnBoundary } from './projection.js';
 import type { BlockRenderProps, ReaderProps } from './types.js';
+import { RetraceUserActions } from './RetraceActions.js';
+import { collectUserActionsIndex, computeShadowPlan, readRetraceConfig, type RetraceShadowPlan } from './retrace.js';
 import css from './Reader.module.css';
 import { markdownLabels, truncatedJsonLabel } from './primitive-labels.js';
 
@@ -44,11 +46,16 @@ type SeatProps = BlockRenderProps & Pick<ReaderProps, 'useChat'> & {
   nodeKey: string; boundary: TurnBoundary; pinned?: boolean; processOpen?: boolean;
 };
 
-const ProcessNode = memo(function ProcessNode({ useChat, t, nodeKey, open, motion, onRead, returnFocusTo }: Pick<ReaderProps, 'useChat' | 't'> & {
+/** Facts shared by every reader row so retrace shadowing stays consistent. */
+interface RetraceRowProps {
+  shadow: RetraceShadowPlan;
+}
+
+const ProcessNode = memo(function ProcessNode({ useChat, t, nodeKey, open, motion, onRead, returnFocusTo, shadow }: Pick<ReaderProps, 'useChat' | 't'> & RetraceRowProps & {
   nodeKey: string; open: boolean; motion: boolean; onRead: () => void; returnFocusTo: RefObject<HTMLButtonElement>;
 }) {
   const node = useChat(snapshot => snapshot.nodes.get(nodeKey));
-  if (!node || node.visibility === 'hidden') return null;
+  if (!node || node.visibility === 'hidden' || shadow.hiddenKeys.has(nodeKey)) return null;
   let content: ReactNode = null;
   if (isNode(node, 'context')) content = <ContextInjectionRow {...node.data} t={t} />;
   else if (isNode(node, 'system-prompt')) content = <details className={css.detail}><summary>系统提示词</summary><pre className={css.toolRaw}>{node.data.text}</pre></details>;
@@ -58,11 +65,11 @@ const ProcessNode = memo(function ProcessNode({ useChat, t, nodeKey, open, motio
   return content && <ProcessFragment open={open} motion={motion} onRead={onRead} returnFocusTo={returnFocusTo} nodeKey={nodeKey} framed>{content}</ProcessFragment>;
 });
 
-const AssistantNode = memo(function AssistantNode({ useChat, nodeKey, boundary, processOpen = false, pinned = false, motion, onRead, returnFocusTo, ...render }: SeatProps & {
+const AssistantNode = memo(function AssistantNode({ useChat, nodeKey, boundary, processOpen = false, pinned = false, motion, onRead, returnFocusTo, shadow, ...render }: SeatProps & RetraceRowProps & {
   motion: boolean; onRead: () => void; returnFocusTo: RefObject<HTMLButtonElement>;
 }) {
   const node = useChat(snapshot => snapshot.nodes.get(nodeKey));
-  if (!node || node.visibility === 'hidden' || !isNode(node, 'assistant-step')) return null;
+  if (!node || node.visibility === 'hidden' || shadow.hiddenKeys.has(nodeKey) || !isNode(node, 'assistant-step')) return null;
   const data = node.data;
   const parts = assistantSegments(data.blocks);
   const earlier = isEarlierNarration(data, boundary);
@@ -157,15 +164,23 @@ const CompactionDivider = memo(function CompactionDivider({ data }: {
   );
 });
 
-const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, processOpen = false, ...render }: SeatProps) {
+const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, processOpen = false, sessionId, retraceActions, shadow, ...render }: SeatProps & RetraceRowProps & {
+  sessionId: string;
+  retraceActions: Map<number, { messageId?: string }>;
+}) {
   const node = useChat(snapshot => snapshot.nodes.get(nodeKey));
-  if (!node || node.visibility === 'hidden') return null;
+  if (!node || node.visibility === 'hidden' || shadow.hiddenKeys.has(nodeKey)) return null;
   if (isNode(node, 'user') || isNode(node, 'steering')) {
     const blocks = contentBlocks(node.data.content);
     const imageBlocks = blocks.filter(b => b.kind === 'image');
     const otherBlocks = blocks.filter(b => b.kind !== 'image');
     const text = otherBlocks.filter((block): block is Extract<typeof block, { kind: 'text' }> => block.kind === 'text').map(block => block.text).join('\n\n');
     const time = node.data.time;
+    // 编辑/撤回 need retrace's `user-actions` pairing (messageId); a shadowed
+    // message can never be operated on again — the host rejects it anyway.
+    const seq = (node.data as { seq?: unknown }).seq;
+    const retraceEntry = typeof seq === 'number' ? retraceActions.get(seq) : undefined;
+    const operable = typeof seq === 'number' && !shadow.shadowedSeqs.has(seq) && retraceEntry?.messageId !== undefined;
     return <div className={css.userCluster} data-reader-anchor data-reader-key={nodeKey}>
       {node.kind === 'steering' && <p className={css.meta}>补充消息</p>}
       {imageBlocks.length > 0 && <div className={css.userImages}>
@@ -175,6 +190,7 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
         <Blocks {...render} blocks={otherBlocks} source="user" />
       </div>}
       <UserMessageActions text={text} time={time} />
+      {operable && <RetraceUserActions sessionId={sessionId} messageId={retraceEntry?.messageId} text={text} fillComposer={render.fillComposer} />}
     </div>;
   }
   if (isNode(node, 'assistant-step')) return null;
@@ -229,18 +245,19 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
     const count = Array.isArray(data?.shadowedSeqs) && data.shadowedSeqs.length > 0
       ? `（${data.shadowedSeqs.length} 条记录已撤出上下文）`
       : '';
-    return <div className={css.notice}>{label}{count}</div>;
+    const degraded = shadow.degradedMarkerKeys.has(nodeKey);
+    return <div className={css.notice}>{label}{count}{degraded ? '（涉及范围过大，阅读页保留原文显示）' : ''}</div>;
   }
-  if (node.kind === 'recall-marker') {
-    const data = node.data as { op?: string; compact?: boolean; shadowedSeqs?: unknown[] } | undefined;
-    if (data?.compact || data?.op === 'compaction') return null;
-    const label = data?.op === 'edit' ? '此处编辑重发' : data?.op === 'regenerate' ? '此处重新生成' : '此前的消息已撤回';
-    const count = Array.isArray(data?.shadowedSeqs) && data.shadowedSeqs.length > 0
-      ? `（${data.shadowedSeqs.length} 条记录已撤出上下文）`
-      : '';
-    return <div className={css.notice}>{label}{count}</div>;
+  if (node.kind === 'retrace-reference') {
+    if (!readRetraceConfig().showOriginalInput) return null;
+    const data = node.data as { text?: unknown } | undefined;
+    if (typeof data?.text !== 'string' || data.text.length === 0) return null;
+    return <div className={css.originalInput} data-reader-anchor>
+      <span className={css.originalInputLabel}>编辑前的原文</span>
+      <div className={css.originalInputBody}>{data.text}</div>
+    </div>;
   }
-  if (node.kind === 'context' || node.kind === 'turn-tail' || node.kind === 'system-prompt' || node.kind === 'turn-process' || node.kind === 'user-actions' || node.kind === 'retrace-reference') return null;
+  if (node.kind === 'context' || node.kind === 'turn-tail' || node.kind === 'system-prompt' || node.kind === 'turn-process' || node.kind === 'user-actions') return null;
   return <div className={css.unknown} data-reader-anchor>
     <p>此记录类型暂未接入阅读页：{node.kind}</p>
     <JsonBlock label="查看原始记录" payload={node.data} truncatedLabel={truncatedJsonLabel} />
@@ -443,7 +460,10 @@ function DeliverablesRow({ deliverables, openFile, revealFile }: {
   );
 }
 
-const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedProcessKeys, ...props }: ReaderProps & { group: ReaderGroup; motion: boolean; pinnedKeys: readonly string[]; selectedProcessKeys: readonly string[] }) {
+const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedProcessKeys, shadow, retraceActions, ...props }: ReaderProps & RetraceRowProps & {
+  group: ReaderGroup; motion: boolean; pinnedKeys: readonly string[]; selectedProcessKeys: readonly string[];
+  retraceActions: Map<number, { messageId?: string }>;
+}) {
   const nodes = props.useChat(snapshot => snapshot.nodes);
   const turn = props.useChat(snapshot => group.turn === null ? undefined : snapshot.timeline.turns.get(group.turn));
   const boundary = useMemo(() => boundaryOf(turn), [turn]);
@@ -498,8 +518,11 @@ const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedP
   const terminal = terminalLabel(boundary.reason);
   const hasTurnError = flow.some(item => item.kind === 'node' && nodes.get(item.nodeKey)?.kind === 'turn-error');
   const showTerminalNotice = terminal && !hasTurnError && boundary.reason !== 'interrupted' && boundary.reason !== 'aborted';
+  // A turn whose every row was recalled collapses to nothing — its marker
+  // notice elsewhere in the stream already carries the recall information.
+  if (group.keys.every(key => shadow.hiddenKeys.has(key))) return null;
   return <section className={css.turn} data-reader-turn={group.turn ?? 'unresolved'} data-reader-turn-state={boundary.status} data-reader-turn-result={boundary.reason ?? undefined}>
-    {startsWithUser && <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={group.keys[0]} /></BlockBoundary>}
+    {startsWithUser && <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={group.keys[0]} sessionId={props.sessionId} retraceActions={retraceActions} shadow={shadow} /></BlockBoundary>}
     {hasProcess && <Disclosure open={expanded} onChange={setExpanded} controls={flowId} buttonRef={processButton}
       label={<GroupStatus group={group} sessionId={props.sessionId} useChat={props.useChat} useSessionPendingInteraction={props.useSessionPendingInteraction} motion={motion} />} status={turn?.steps.length ? `${turn.steps.length} 个步骤` : undefined} />}
     {!hasProcess && boundary.status === 'open' && <div className={css.disclosure} data-reader-status-only>
@@ -507,9 +530,9 @@ const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedP
     </div>}
     <div id={flowId} className={css.mainFlow} data-reader-flow>
       {flow.map(item => item.kind === 'node' ? <Fragment key={item.key}>
-        <BlockBoundary><ProcessNode useChat={props.useChat} t={props.t} nodeKey={item.nodeKey} open={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} /></BlockBoundary>
-        <BlockBoundary><AssistantNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} /></BlockBoundary>
-        <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} /></BlockBoundary>
+        <BlockBoundary><ProcessNode useChat={props.useChat} t={props.t} nodeKey={item.nodeKey} open={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} shadow={shadow} /></BlockBoundary>
+        <BlockBoundary><AssistantNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} shadow={shadow} /></BlockBoundary>
+        <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} sessionId={props.sessionId} retraceActions={retraceActions} shadow={shadow} /></BlockBoundary>
       </Fragment> : <Fragment key={item.key}>
         <BlockBoundary><ProcessFragment open={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} nodeKey={item.key} framed>
           <ToolActivity {...shared} entry={item} motion={motion} turnClosed={boundary.status === 'closed'} onRead={pinProcess} />
@@ -538,6 +561,10 @@ export function Reader(props: ReaderProps) {
   const motion = useMotionAllowed(motionPreference);
   const streamMotion = useMemo(() => ({ enabled: motion, activatedAt: activatedAt.current }), [motion]);
   const groups = useMemo(() => groupNodes(order, key => nodes.get(key)), [order, nodes, timeline]);
+  // dsh-retrace interop: seq→messageId pairing for 编辑/撤回 chips, and the
+  // shadow plan that keeps recalled rows out of the reading flow.
+  const retraceActions = useMemo(() => collectUserActionsIndex(nodes), [nodes]);
+  const shadow = useMemo(() => computeShadowPlan(nodes, readRetraceConfig()), [nodes]);
   const scroll = useReadingScroll(root, motion);
   const pinnedKeys = usePinnedSelection(root);
   const selectedProcessKeys = usePinnedSelection(root, '[data-reader-process]');
@@ -681,7 +708,7 @@ export function Reader(props: ReaderProps) {
       {historyError && <div className={css.notice}>历史记录加载失败，可再次尝试；现有内容未改变。</div>}
       {openError && <div className={css.error} role="alert">会话暂时无法读取：{openError.message}</div>}
       {loading && groups.length === 0 && <p className={css.empty} role="status">正在读取会话…</p>}
-      {groups.map(group => <TurnGroup key={group.key} {...props} group={group} motion={motion} pinnedKeys={pinnedKeys} selectedProcessKeys={selectedProcessKeys} />)}
+      {groups.map(group => <TurnGroup key={group.key} {...props} group={group} motion={motion} pinnedKeys={pinnedKeys} selectedProcessKeys={selectedProcessKeys} shadow={shadow} retraceActions={retraceActions} />)}
       {visibleSubmissions.map(submission => (
         <div key={submission.requestId} className={css.userCluster} data-reader-pending-submission>
           {submission.attachments.some(item => item.type === 'image') && (

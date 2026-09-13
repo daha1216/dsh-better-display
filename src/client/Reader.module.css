@@ -270,3 +270,8 @@
 @media (prefers-reduced-motion: reduce) { .chevron, .imageOpen img, .processMeta { transition: none; } }
 @media (pointer: coarse) { .disclosureButton { min-height: 44px; } }
 @media (max-width: 600px) { .root { padding-inline: 20px; } .column { gap: 18px; } .toolbar { font-size: 11px; } .user { max-width: 90%; } }
+
+/* dsh-retrace 编辑前的原文引用块（retrace-reference）。 */
+.originalInput { border-left: 2px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-module-platform); border-radius: 0 10px 10px 0; padding: 8px 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+.originalInputLabel { display: block; margin-bottom: 2px; color: var(--dsw-alias-label-tertiary); }
+.originalInputBody { white-space: pre-wrap; }
