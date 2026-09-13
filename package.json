@@ -102,11 +102,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aa2246740/dsh-better-display.git"
+    "url": "git+https://github.com/daha1216/dsh-better-display.git"
   },
-  "homepage": "https://github.com/aa2246740/dsh-better-display#readme",
+  "homepage": "https://github.com/daha1216/dsh-better-display#readme",
   "bugs": {
-    "url": "https://github.com/aa2246740/dsh-better-display/issues"
+    "url": "https://github.com/daha1216/dsh-better-display/issues"
   },
   "keywords": [
     "deepseek-harness",
