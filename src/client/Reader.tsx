@@ -242,11 +242,20 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
   }
   if (node.kind === 'retrace-reference') {
     if (!readRetraceConfig().showOriginalInput) return null;
-    const data = node.data as { text?: unknown } | undefined;
-    if (typeof data?.text !== 'string' || data.text.length === 0) return null;
+    const data = node.data as { text?: unknown; seq?: unknown } | undefined;
+    // Retrace publishes the pre-edit original on the `edit` recall-marker, not on
+    // this reference node: the reference payload carries the referenced message's
+    // own current content, so printing it here would label every user message as
+    // "编辑前的原文". Prefer an explicit `text` when a producer supplies one, and
+    // otherwise resolve the marker of the message this row replaced.
+    const ownSeq = typeof data?.seq === 'number' ? data.seq : null;
+    const text = typeof data?.text === 'string' && data.text.length > 0
+      ? data.text
+      : (ownSeq === null ? null : shadow.editOriginalTexts.get(ownSeq) ?? null);
+    if (typeof text !== 'string' || text.length === 0) return null;
     return <div className={css.originalInput} data-reader-anchor>
       <span className={css.originalInputLabel}>编辑前的原文</span>
-      <div className={css.originalInputBody}>{data.text}</div>
+      <div className={css.originalInputBody}>{text}</div>
     </div>;
   }
   if (node.kind === 'context' || node.kind === 'turn-tail' || node.kind === 'system-prompt' || node.kind === 'turn-process' || node.kind === 'user-actions') return null;

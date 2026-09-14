@@ -104,26 +104,67 @@ export interface RetraceShadowPlan {
   readonly shadowedSeqs: ReadonlySet<number>;
   /** Markers whose hide set tripped the safety guard (rows stay visible). */
   readonly degradedMarkerKeys: ReadonlySet<string>;
+  /**
+   * Pre-edit original text keyed by the seq of the user message that replaced it
+   * (the first user message after the `edit` marker).
+   *
+   * Retrace keeps the pre-edit text on the marker itself (`recall-marker.data.text`);
+   * its `retrace-reference` node carries the referenced message's **own** current
+   * content, so an "original input" row must read the marker — reading the
+   * reference node's payload would print a block under every user message.
+   */
+  readonly editOriginalTexts: ReadonlyMap<number, string>;
 }
 
-const EMPTY_PLAN: RetraceShadowPlan = { hiddenKeys: new Set(), shadowedSeqs: new Set(), degradedMarkerKeys: new Set() };
+const EMPTY_PLAN: RetraceShadowPlan = {
+  hiddenKeys: new Set(), shadowedSeqs: new Set(), degradedMarkerKeys: new Set(), editOriginalTexts: new Map(),
+};
+
+/** Resolve each `edit` marker's original text onto the user message that replaced it. */
+function editOriginalTextsFor(
+  editMarkers: readonly { seq: number; text: string }[],
+  userSeqs: readonly number[],
+): ReadonlyMap<number, string> {
+  const out = new Map<number, string>();
+  // Ascending marker seq: a later edit of the same message overwrites the earlier original.
+  for (const marker of [...editMarkers].sort((a, b) => a.seq - b.seq)) {
+    let replaced: number | null = null;
+    for (const seq of userSeqs) {
+      if (seq <= marker.seq) continue;
+      if (replaced === null || seq < replaced) replaced = seq;
+    }
+    if (replaced !== null) out.set(replaced, marker.text);
+  }
+  return out;
+}
 
 export function computeShadowPlan(nodes: ChatNodes, config: RetraceConfig): RetraceShadowPlan {
   const markers: { key: string; seqs: readonly number[] }[] = [];
+  const editMarkers: { seq: number; text: string }[] = [];
+  const userSeqs: number[] = [];
   for (const node of nodes.values()) {
+    if (node.kind === 'user' || node.kind === 'steering') {
+      const seq = (node.data as { seq?: unknown } | undefined)?.seq;
+      if (typeof seq === 'number') userSeqs.push(seq);
+      continue;
+    }
     if (node.kind !== 'recall-marker') continue;
-    const data = node.data as { compact?: boolean; shadowedSeqs?: unknown } | undefined;
+    const data = node.data as { compact?: boolean; shadowedSeqs?: unknown; op?: unknown; text?: unknown; seq?: unknown } | undefined;
     if (data?.compact) continue;
+    if (data?.op === 'edit' && typeof data.seq === 'number' && typeof data.text === 'string' && data.text.length > 0) {
+      editMarkers.push({ seq: data.seq, text: data.text });
+    }
     const seqs = Array.isArray(data?.shadowedSeqs)
       ? data.shadowedSeqs.filter((value): value is number => typeof value === 'number')
       : [];
     markers.push({ key: node.key, seqs });
   }
-  if (markers.length === 0) return EMPTY_PLAN;
+  const editOriginalTexts = editOriginalTextsFor(editMarkers, userSeqs);
+  if (markers.length === 0) return { ...EMPTY_PLAN, editOriginalTexts };
 
   const shadowedSeqs = new Set<number>();
   for (const marker of markers) for (const seq of marker.seqs) shadowedSeqs.add(seq);
-  if (!config.hideShadowed) return { hiddenKeys: new Set(), shadowedSeqs, degradedMarkerKeys: new Set() };
+  if (!config.hideShadowed) return { hiddenKeys: new Set(), shadowedSeqs, degradedMarkerKeys: new Set(), editOriginalTexts };
 
   const rowCount = realRowCount(nodes);
   const hiddenKeys = new Set<string>();
@@ -136,6 +177,6 @@ export function computeShadowPlan(nodes: ChatNodes, config: RetraceConfig): Retr
       for (const key of keys) hiddenKeys.add(key);
     }
   }
-  return { hiddenKeys, shadowedSeqs, degradedMarkerKeys };
+  return { hiddenKeys, shadowedSeqs, degradedMarkerKeys, editOriginalTexts };
 }
 

@@ -51,7 +51,7 @@
 
 - **shadow 行隐藏**：`computeShadowPlan` / `retraceHiddenKeysFor`（`src/client/retrace.ts`），按 recall-marker 的 `shadowedSeqs` 算出要隐藏的 node key；`RETRACE_PSEUDO_KINDS` 覆盖 `user-actions` / `retrace-reference` / `recall-marker` 等伪节点。
 - **撤回标记**：recall-marker 节点的展示。
-- **原文引用块**：`retrace-reference` 节点 → `.originalInput*`（`g2GnNq_originalInput` 等），标题「编辑前的原文」。
+- **原文引用块**：`retrace-reference` 节点 → `.originalInput*`（`g2GnNq_originalInput` 等），标题「编辑前的原文」。原文文本取自 `op === 'edit'` 的 recall-marker 的 `data.text`（经 `retraceEditOriginalTextsFor` 映射到 marker 之后的第一条用户消息，与 retrace 对话页 `useEditReference` 语义一致）；显式 `data.text` 优先（旧/他方契约），**不读** `data.content`（那是消息自身当前正文，读了会让每条消息都长出原文块）。
 
 **锚点契约（不可移除）**：`Reader.tsx` 的 `MainNode` user 分支在用户消息簇上输出 `data-reader-anchor data-reader-key={nodeKey}`；dsh-retrace 的阅读页注入器**只靠这两个属性**定位消息簇（再找 `button[aria-label="复制消息"]` 所在行插 chips）。本仓库自己的 motion/滚动定位也依赖 `data-reader-anchor`。**移除或改名这两个属性会同时打断两边的功能**，改之前先与 retrace 侧对齐。
 

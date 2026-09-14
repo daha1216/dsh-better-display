@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-display",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A calmer reading view for DeepSeek Harness: native process details, live reasoning, and clean final answers. (daha1216 fork: reading-view display support for dsh-retrace — shadowed-row hiding, markers, and edit references)",
   "type": "module",
   "license": "MIT",
