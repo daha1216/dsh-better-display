@@ -562,9 +562,12 @@ export function Reader(props: ReaderProps) {
   const streamMotion = useMemo(() => ({ enabled: motion, activatedAt: activatedAt.current }), [motion]);
   const groups = useMemo(() => groupNodes(order, key => nodes.get(key)), [order, nodes, timeline]);
   // dsh-retrace interop: seq→messageId pairing for 编辑/撤回 chips, and the
-  // shadow plan that keeps recalled rows out of the reading flow.
-  const retraceActions = useMemo(() => collectUserActionsIndex(nodes), [nodes]);
-  const shadow = useMemo(() => computeShadowPlan(nodes, readRetraceConfig()), [nodes]);
+  // shadow plan that keeps recalled rows out of the reading flow. The node
+  // store itself is reference-stable while content hydrates, so the memo also
+  // keys on the order length to recompute once conversation nodes materialize.
+  const retraceNodeCount = order.length;
+  const retraceActions = useMemo(() => collectUserActionsIndex(nodes), [nodes, retraceNodeCount]);
+  const shadow = useMemo(() => computeShadowPlan(nodes, readRetraceConfig()), [nodes, retraceNodeCount]);
   const scroll = useReadingScroll(root, motion);
   const pinnedKeys = usePinnedSelection(root);
   const selectedProcessKeys = usePinnedSelection(root, '[data-reader-process]');
