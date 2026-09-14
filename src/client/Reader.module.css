@@ -226,7 +226,15 @@
 .historyButton:disabled { opacity: .55; cursor: default; }
 .empty { padding: 40px 0; color: var(--dsw-alias-label-tertiary); text-align: center; }
 .answerActions { display: flex; align-items: center; gap: 8px; margin: 13px 0 0 -6px; min-height: 28px; }
-.userActions { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.userActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 28px; }
+.retraceChips { display: inline-flex; gap: 2px; }
+.retraceChip { border: 0; background: transparent; cursor: pointer; color: var(--dsw-alias-label-tertiary); padding: 2px 6px; border-radius: 6px; font-size: 12px; line-height: 20px; white-space: nowrap; }
+.retraceChip:hover:not(:disabled) { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover); }
+.retraceChip:disabled { opacity: .5; cursor: default; }
+.retraceChipDanger:hover:not(:disabled) { color: var(--dsw-alias-state-error-primary); }
+.retraceChipArmed, .retraceChipArmed:hover:not(:disabled) { color: var(--dsw-alias-state-error-primary); }
+.retraceChipArmed:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.retraceRowBreak { flex-basis: 100%; }
 .messageClock { font-size: 13px; line-height: 24px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .iconButton { display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; padding: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); }
 .iconButton svg { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }

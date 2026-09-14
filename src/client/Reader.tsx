@@ -189,8 +189,9 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
       {otherBlocks.length > 0 && <div className={css.user}>
         <Blocks {...render} blocks={otherBlocks} source="user" />
       </div>}
-      <UserMessageActions text={text} time={time} />
-      {operable && <RetraceUserActions sessionId={sessionId} messageId={retraceEntry?.messageId} text={text} fillComposer={render.fillComposer} />}
+      <UserMessageActions text={text} time={time}>
+        {operable && <RetraceUserActions sessionId={sessionId} messageId={retraceEntry?.messageId} text={text} fillComposer={render.fillComposer} />}
+      </UserMessageActions>
     </div>;
   }
   if (isNode(node, 'assistant-step')) return null;

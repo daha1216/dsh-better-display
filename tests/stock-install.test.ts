@@ -34,11 +34,10 @@ test('commits compiled lib entries and does not require a prepare script', () =>
   assert.match(clientJs, /id:\s*"dsh-better-display"/);
 });
 
-test('README leads with the official stock one-liner and names pnpm', () => {
+test('README leads with the fork install one-liner', () => {
   for (const name of ['README.md', 'README.en.md']) {
     const text = readFileSync(resolve(root, name), 'utf8');
-    assert.match(text, /dsh plugin --profile web add github:aa2246740\/dsh-better-display/);
-    assert.match(text, /pnpm/);
+    assert.match(text, /dsh plugin --profile web add github:daha1216\/dsh-better-display/);
     assert.doesNotMatch(text, /activate-new-client/);
     assert.doesNotMatch(text, /my-plugins/);
     assert.doesNotMatch(text, /DSHX_HARNESS/);

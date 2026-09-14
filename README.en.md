@@ -5,7 +5,7 @@
 > **Fork of [aa2246740/dsh-better-display](https://github.com/aa2246740/dsh-better-display)** (v0.1.1): reading-view support for dsh-retrace nodes — see CHANGELOG.
 
 ```sh
-dsh plugin --profile web add github:aa2246740/dsh-better-display
+dsh plugin --profile web add github:daha1216/dsh-better-display
 ```
 
 You need official `dsh` (or `npx @deepseek-ai/dsh`) and **pnpm** on PATH. `dsh plugin add` runs pnpm in `$DSH_HOME/profiles/web`. This repo commits built `lib/`, so a git install does not need `prepare` or a profile `allowBuilds` entry.
