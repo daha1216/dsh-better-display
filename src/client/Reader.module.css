@@ -9,14 +9,21 @@
   overflow-anchor: auto;
   container-type: inline-size;
 }
-.column { max-width: var(--dsh-chat-content-width, 748px); width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.column { max-width: var(--bd-reading-width, var(--dsh-chat-content-width, 748px)); width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: var(--bd-turn-column-gap, 22px); min-width: 0; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; }
 .textButton, .historyButton, .iconButton, .jump, .disclosureButton, .imageOpen, .dialogClose { font: inherit; cursor: pointer; }
 .textButton { border: 0; background: transparent; color: var(--dsw-alias-label-secondary); padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
 .textButton:hover, .iconButton:hover, .disclosureButton:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .root button:focus-visible, .root summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 3px; }
 .turn { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.turn + .turn { margin-top: 12px; }
+.turn + .turn { margin-top: var(--bd-turn-turn-gap, 12px); }
+/* Long-session rendering: off-screen turns skip style/layout/paint. The
+   containment stays on the turn itself — hoisting it to .root would make the
+   whole column a containing block and break the rail's scroll math.
+   `auto <px>` remembers the measured height after a turn has rendered once;
+   the length is only the first-visit estimate. */
+.turn { content-visibility: auto; contain-intrinsic-size: auto 520px; }
+@media (max-width: 600px) { .turn { contain-intrinsic-size: auto 760px; } }
 .userCluster { display: flex; flex-direction: column; align-self: flex-end; align-items: flex-end; max-width: min(525px, 82%); gap: 8px; min-width: 0; margin-bottom: 4px; }
 .userImages { display: flex; flex-direction: column; align-items: flex-end; max-width: 100%; min-width: 0; }
 .userImages .imageFigure { align-self: flex-end; }
@@ -212,12 +219,16 @@
 .compactionSummaryHeader { font-size: 11px; font-weight: 500; color: var(--dsw-alias-label-tertiary); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--dsw-alias-border-l1); }
 .notice, .error, .attention { border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .notice { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); border: 1px solid var(--dsw-alias-border-l2); }
-.error { display: flex; align-items: flex-start; gap: 10px; background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.22); color: var(--dsw-alias-label-primary); }
-.errorIcon { width: 16px; height: 16px; flex: none; margin-top: 2px; color: #ef4444; }
+/* State colors are local tokens (`--bd-*`). The host exposes
+   --dsw-alias-state-error-primary / -success-primary, but their palettes differ
+   from this view's, so the originals stay as fallbacks: a theme override can
+   set --bd-*, and both light and dark fall back to the unchanged values. */
+.error { display: flex; align-items: flex-start; gap: 10px; background: var(--bd-error-soft, rgba(239, 68, 68, 0.06)); border: 1px solid var(--bd-error-line, rgba(239, 68, 68, 0.22)); color: var(--dsw-alias-label-primary); }
+.errorIcon { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--bd-error, #ef4444); }
 .errorCopy { flex: 1; min-width: 0; }
-.errorTitle { display: flex; align-items: center; gap: 8px; color: #dc2626; font-weight: 500; margin-bottom: 2px; }
+.errorTitle { display: flex; align-items: center; gap: 8px; color: var(--bd-error-strong, #dc2626); font-weight: 500; margin-bottom: 2px; }
 .errorMessage { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; word-break: break-word; }
-.errorCode { font-size: 11px; padding: 1px 5px; border-radius: 4px; background: rgba(239, 68, 68, 0.12); color: #dc2626; font-family: inherit; }
+.errorCode { font-size: 11px; padding: 1px 5px; border-radius: 4px; background: var(--bd-error-tint, rgba(239, 68, 68, 0.12)); color: var(--bd-error-strong, #dc2626); font-family: inherit; }
 .attention { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--dsw-alias-state-business-primary); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); }
 .attention span { color: var(--dsw-alias-label-secondary); }
 .unknown { background: var(--dsw-alias-bg-module-platform); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 22px; }
@@ -250,11 +261,11 @@
 .deliverablesRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .deliverableChip { box-sizing: border-box; display: inline-flex; align-items: center; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; overflow: hidden; }
 .deliverableChip:hover { border-color: var(--dsw-alias-border-l3); background: var(--dsw-alias-bg-module-platform); box-shadow: 0 1px 4px var(--dsw-alias-border-l1); }
-.deliverableChip[data-status=opened] { border-color: #10b981; background: rgba(16, 185, 129, 0.12); color: #059669; }
+.deliverableChip[data-status=opened] { border-color: var(--bd-success, #10b981); background: var(--bd-success-tint, rgba(16, 185, 129, 0.12)); color: var(--bd-success-strong, #059669); }
 .chipMain { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 3px 6px 3px 8px; border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .chipMain:hover { color: var(--dsw-alias-label-primary); }
 .deliverableIcon, .statusIcon { width: 13px; height: 13px; flex: none; opacity: .8; }
-.statusIcon { color: #10b981; }
+.statusIcon { color: var(--bd-success, #10b981); }
 .deliverableName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chipActions { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; border-left: 1px solid transparent; opacity: .65; transition: opacity 150ms ease, border-left-color 150ms ease; }
 .deliverableChip:hover .chipActions { opacity: 1; border-left-color: var(--dsw-alias-border-l2); }
@@ -264,7 +275,7 @@
 .deliverablesMore { font-size: 12px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; }
 .deliverablesShowFolder { border: 1px solid transparent; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 12px; cursor: pointer; padding: 2px 7px; border-radius: 5px; display: inline-flex; align-items: center; gap: 4px; transition: all 150ms ease; }
 .deliverablesShowFolder:hover { color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-interactive-bg-hover); border-color: var(--dsw-alias-border-l2); }
-.deliverablesShowFolder[data-status=opened] { color: #10b981; border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.08); }
+.deliverablesShowFolder[data-status=opened] { color: var(--bd-success, #10b981); border-color: var(--bd-success-line, rgba(16, 185, 129, 0.3)); background: var(--bd-success-soft, rgba(16, 185, 129, 0.08)); }
 .jump { transform: translateY(-100%); border: 1px solid var(--dsw-alias-border-l2); border-radius: 20px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; padding: 7px 13px; box-shadow: 0 2px 8px var(--dsw-alias-border-l1); }
 [data-motion=off] .chevron, [data-motion=off] .imageOpen img, [data-motion=off] .processMeta { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chevron, .imageOpen img, .processMeta { transition: none; } }
@@ -272,6 +283,69 @@
 @media (max-width: 600px) { .root { padding-inline: 20px; } .column { gap: 18px; } .toolbar { font-size: 11px; } .user { max-width: 90%; } }
 
 /* dsh-retrace 编辑前的原文引用块（retrace-reference）。 */
-.originalInput { border-left: 2px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-module-platform); border-radius: 0 10px 10px 0; padding: 8px 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+.originalInput { border-left: 2px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-module-platform); border-radius: 0 10px 10px 0; padding: 8px 12px; font-size: calc(12px * var(--bd-reading-scale, 1)); line-height: calc(20px * var(--bd-reading-scale, 1)); color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
 .originalInputLabel { display: block; margin-bottom: 2px; color: var(--dsw-alias-label-tertiary); }
-.originalInputBody { white-space: pre-wrap; }
+.originalInputBody { white-space: pre-wrap; padding-top: 4px; }
+
+/* 撤回标记展开：折叠态维持单行 notice 文案，展开列出被撤出的记录。 */
+.recallToggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: color 140ms ease; }
+.recallToggle:hover { color: var(--dsw-alias-label-primary); }
+.recallToggleLabel { flex: 1; min-width: 0; }
+.recallToggle .chevron { opacity: .7; }
+.recallRecords { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--dsw-alias-border-l1); display: flex; flex-direction: column; gap: 6px; }
+.recallRecord { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; line-height: 18px; }
+.recallRecordMeta { flex: none; display: inline-flex; align-items: baseline; gap: 6px; color: var(--dsw-alias-label-tertiary); font-variant-numeric: tabular-nums; }
+.recallRecordSeq { font-weight: 500; }
+.recallRecordTime { white-space: nowrap; }
+.recallRecordText { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.recallRecord[data-resolved=false] .recallRecordText { color: var(--dsw-alias-label-tertiary); font-style: italic; }
+
+/* 原文引用块折叠：默认标题 + 单行摘要，标题行点击后高度过渡展开全文。 */
+.originalInputHeader { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.originalInputHeader .originalInputLabel { flex: none; margin-bottom: 0; }
+.originalInputHeader .chevron { opacity: .7; }
+.originalInputPreview { flex: 1; min-width: 0; color: var(--dsw-alias-label-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 140ms ease; }
+.originalInputHeader:hover .originalInputPreview { color: var(--dsw-alias-label-secondary); }
+.originalInputReveal { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms cubic-bezier(.22,1,.36,1); }
+.originalInputReveal[data-open=true] { grid-template-rows: 1fr; }
+.originalInputRevealInner { min-height: 0; overflow: hidden; }
+[data-motion=off] .originalInputReveal { transition: none; }
+@media (prefers-reduced-motion: reduce) { .originalInputReveal { transition: none; } }
+@media (pointer: coarse) { .recallToggle, .originalInputHeader { min-height: 44px; } }
+
+/* 阅读设置 popover（工具栏）。按钮样式沿用 .textButton，弹层参照 TurnMetrics 的开关模式。 */
+.settings { position: relative; display: inline-flex; align-items: center; }
+.settings .textButton { display: inline-flex; align-items: center; gap: 4px; }
+.textButton[data-open=true] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.settingsIcon { width: 13px; height: 13px; flex: none; }
+.settingsPop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 50; box-sizing: border-box; width: min(320px, calc(100cqw - 24px)); padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 12px; }
+.settingsGroup { display: flex; flex-direction: column; gap: 8px; }
+.settingsGroup + .settingsGroup { border-top: 1px solid var(--dsw-alias-border-l1); padding-top: 12px; }
+.settingsGroupTitle { font-size: 11px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-tertiary); }
+.settingsRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.settingsLabel { font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
+.settingsSegmented { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 8px; background: var(--dsw-alias-interactive-bg-hover); }
+.settingsSegment { border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 20px; min-width: 28px; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+.settingsSegment[data-active=true] { background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: 0 1px 2px var(--dsw-alias-border-l1); }
+.settingsSwitch { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.settingsSwitch input { width: 14px; height: 14px; flex: none; margin: 0; accent-color: var(--dsw-alias-state-business-primary); cursor: pointer; }
+.settingsNote { margin: 0; font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+@media (pointer: coarse) { .settingsSegment { min-height: 44px; min-width: 40px; } .settingsSwitch { min-height: 44px; } }
+
+/* 阅读设置 · 正文字号：默认档（data-reading-font=auto）不改写宿主 token，视觉与无此模块时一致。
+   显式档位按宿主公式在同一像素增量上缩放正文标题/表格，工具与过程区不在此选择器范围内。 */
+[data-reading-font=fixed] .answer,
+[data-reading-font=fixed] .user {
+  --bd-md-delta: var(--bd-reading-delta, 0px);
+  --bd-md-size: var(--bd-reading-font-size, 14px);
+  --bd-md-size-secondary: min(calc(var(--bd-md-size) - 1px), max(13px, calc(var(--bd-md-size) - 2px)));
+  --bd-md-delta-secondary: calc(var(--bd-md-size-secondary) - 13px);
+  --dsw-font-markdown-base: var(--bd-md-size) / calc(24px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-base-strong: 600 var(--bd-md-size) / calc(24px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-h1: 700 calc(21px + var(--bd-md-delta)) / calc(30px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-h2: 700 calc(19px + var(--bd-md-delta)) / calc(28px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-h3: 700 calc(18px + var(--bd-md-delta)) / calc(26px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-h4: 600 var(--bd-md-size) / calc(24px + var(--bd-md-delta)) var(--dsw-font-family);
+  --dsw-font-markdown-table: var(--bd-md-size-secondary) / calc(22px + var(--bd-md-delta-secondary)) var(--dsw-font-family);
+  --dsw-font-markdown-table-head: 500 var(--bd-md-size-secondary) / calc(22px + var(--bd-md-delta-secondary)) var(--dsw-font-family);
+}

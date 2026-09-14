@@ -46,6 +46,23 @@ export function readRetraceConfig(): RetraceConfig {
   }
 }
 
+/**
+ * Merge a patch into the shared `dsh-retrace:config` block and persist it back
+ * to the same key (storage layout stays identical — dsh-retrace's own settings
+ * UI reads and writes this key too). Unknown fields survive because the base is
+ * the fully-resolved config object, not a re-serialized whitelist. Returns the
+ * merged config so the caller can re-render without re-reading storage.
+ */
+export function writeRetraceConfig(patch: Partial<RetraceConfig>): RetraceConfig {
+  const next = { ...readRetraceConfig(), ...patch };
+  try {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(next));
+  } catch {
+    // Storage unavailable (private mode / quota): the in-memory state still applies.
+  }
+  return next;
+}
+
 type ChatNodes = { values(): readonly ChatConversationViewNode[] };
 
 const SHADOW_MIN_ROWS_FOR_RATIO = 20;
@@ -178,5 +195,175 @@ export function computeShadowPlan(nodes: ChatNodes, config: RetraceConfig): Retr
     }
   }
   return { hiddenKeys, shadowedSeqs, degradedMarkerKeys, editOriginalTexts };
+}
+
+/** Node payload shape touched by {@link computeShadowPlan} across all kinds. */
+interface ShadowRelevantData {
+  seq?: unknown;
+  compact?: unknown;
+  op?: unknown;
+  text?: unknown;
+  shadowedSeqs?: unknown;
+  root?: { seq?: unknown };
+  closing?: { finalNode?: { seq?: unknown } };
+}
+
+/**
+ * Change key for {@link computeShadowPlan}'s output over a node store.
+ *
+ * `ChatNodeStore` keeps a reference-stable identity while its contents hydrate,
+ * so a `useMemo` keyed on the store never sees content-only updates (a marker
+ * arriving with its payload filled in later would keep a stale plan). The
+ * signature is a plain string, so React's `Object.is` comparison re-renders /
+ * recomputes only when something the plan actually reads changed — streaming
+ * assistant text does not.
+ */
+export function shadowPlanSignature(nodes: ChatNodes): string {
+  const parts: string[] = [];
+  for (const node of nodes.values()) {
+    parts.push(node.key, node.kind, typeof node.anchorSeq === 'number' ? String(node.anchorSeq) : '');
+    const data = node.data as ShadowRelevantData | undefined;
+    if (node.kind === 'user' || node.kind === 'steering') {
+      parts.push(typeof data?.seq === 'number' ? String(data.seq) : '');
+    } else if (node.kind === 'recall-marker') {
+      parts.push(
+        data?.compact === true ? 'c' : '',
+        typeof data?.op === 'string' ? data.op : '',
+        typeof data?.seq === 'number' ? String(data.seq) : '',
+        typeof data?.text === 'string' ? data.text : '',
+        Array.isArray(data?.shadowedSeqs) ? data.shadowedSeqs.join(',') : '',
+      );
+    } else if (node.kind === 'tool-call') {
+      parts.push(typeof data?.root?.seq === 'number' ? String(data.root.seq) : '');
+    } else if (node.kind === 'turn-tail') {
+      parts.push(typeof data?.closing?.finalNode?.seq === 'number' ? String(data.closing.finalNode.seq) : '');
+    }
+  }
+  return parts.join('\u0001');
+}
+
+/** One recalled row resolved from the live node store for a marker's audit list. */
+export interface ShadowedRecordSummary {
+  /** Durable message seq the marker shadowed. */
+  readonly seq: number;
+  /** Message timestamp when the resolved node carries one, else null. */
+  readonly time: number | null;
+  /** Plain-text excerpt of the recalled message; empty when unresolved. */
+  readonly text: string;
+  /** Whether a live node still holds this seq (recalled rows stay as an audit trail). */
+  readonly resolved: boolean;
+}
+
+/** Payload fields the recalled-row resolver reads across node kinds. */
+interface RecordSourceData {
+  seq?: unknown;
+  time?: unknown;
+  content?: unknown;
+  blocks?: unknown;
+  closing?: { blocks?: unknown; finalNode?: { seq?: unknown } };
+  root?: { seq?: unknown };
+}
+
+/** Durable seq a real message row carries, mirroring `hiddenKeysFor` resolution. */
+function recordSourceSeq(node: ChatConversationViewNode, data: RecordSourceData | undefined): number | null {
+  if (node.kind === 'user' || node.kind === 'steering') return typeof data?.seq === 'number' ? data.seq : null;
+  if (node.kind === 'tool-call') return typeof data?.root?.seq === 'number' ? data.root.seq : null;
+  if (node.kind === 'turn-tail') return typeof data?.closing?.finalNode?.seq === 'number' ? data.closing.finalNode.seq : null;
+  if (typeof node.anchorSeq !== 'number') return null;
+  // Pseudo rows anchor at half seqs (retrace-reference uses `seq - 0.5`); map
+  // the anchor back to its integer seq before matching.
+  return node.anchorSeq % 1 === 0 ? node.anchorSeq : Math.ceil(node.anchorSeq);
+}
+
+/** Text blocks of one message payload; `type` on user content, `kind` on assistant blocks. */
+function recordTextBlocks(source: unknown, key: 'type' | 'kind'): string[] {
+  if (!Array.isArray(source)) return [];
+  const parts: string[] = [];
+  for (const block of source) {
+    if (typeof block !== 'object' || block === null) continue;
+    const record = block as { type?: unknown; kind?: unknown; text?: unknown };
+    if (record[key] !== 'text' || typeof record.text !== 'string') continue;
+    parts.push(record.text);
+  }
+  return parts;
+}
+
+/** First content-bearing representation of a recalled row (user content, then assistant blocks). */
+function recordTextOf(data: RecordSourceData | undefined): string {
+  for (const [source, key] of [
+    [data?.content, 'type'],
+    [data?.blocks, 'kind'],
+    [data?.closing?.blocks, 'kind'],
+  ] as const) {
+    const text = recordTextBlocks(source, key).join('\n');
+    if (text.length > 0) return text;
+  }
+  return '';
+}
+
+/** Richer payloads win when several nodes share one seq (user > assistant-step > turn-tail). */
+function recordPriority(kind: string): number {
+  if (kind === 'user' || kind === 'steering') return 3;
+  if (kind === 'assistant-step') return 2;
+  if (kind === 'turn-tail') return 1;
+  return 0;
+}
+
+/**
+ * Resolve a marker's `shadowedSeqs` into per-row previews for its expandable
+ * audit list. Recalled rows stay in the node store, so their summary and time
+ * are read back from the live nodes; a seq whose node left the loaded window is
+ * reported as unresolved (the caller renders a placeholder) instead of dropped.
+ *
+ * Order follows `shadowedSeqs` (the audit order), duplicates collapse, and
+ * pseudo rows (`user-actions` / `retrace-reference` / `recall-marker`) are
+ * skipped so a reference row cannot shadow its own target message.
+ */
+export function shadowedRecordSummaries(nodes: ChatNodes, seqs: readonly unknown[]): ShadowedRecordSummary[] {
+  const wanted: number[] = [];
+  const unique = new Set<number>();
+  for (const value of seqs) {
+    if (typeof value !== 'number' || unique.has(value)) continue;
+    unique.add(value);
+    wanted.push(value);
+  }
+  if (wanted.length === 0) return [];
+
+  const best = new Map<number, { data: RecordSourceData | undefined; priority: number }>();
+  for (const node of nodes.values()) {
+    if (PSEUDO_KINDS.has(node.kind)) continue;
+    const data = node.data as RecordSourceData | undefined;
+    const seq = recordSourceSeq(node, data);
+    if (seq === null || !unique.has(seq)) continue;
+    const priority = recordPriority(node.kind);
+    const current = best.get(seq);
+    if (current === undefined || priority > current.priority) best.set(seq, { data, priority });
+  }
+
+  return wanted.map((seq): ShadowedRecordSummary => {
+    const found = best.get(seq);
+    if (found === undefined) return { seq, time: null, text: '', resolved: false };
+    return {
+      seq,
+      time: typeof found.data?.time === 'number' ? found.data.time : null,
+      text: recordTextOf(found.data),
+      resolved: true,
+    };
+  });
+}
+
+/** Collapsed original-input summary length, in characters. */
+const ORIGINAL_INPUT_PREVIEW_LIMIT = 80;
+
+/**
+ * Collapsed single-line summary for the pre-edit reference block: its first
+ * non-empty line, whitespace-collapsed and clamped with an ellipsis. Kept pure
+ * so the reading width never has to be measured to render the folded row.
+ */
+export function originalInputPreview(text: string, limit: number = ORIGINAL_INPUT_PREVIEW_LIMIT): string {
+  const line = text.split(/\r?\n/).find(value => value.trim().length > 0) ?? '';
+  const collapsed = line.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= limit) return collapsed;
+  return `${collapsed.slice(0, Math.max(0, limit)).trimEnd()}…`;
 }
 

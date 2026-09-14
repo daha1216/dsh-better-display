@@ -163,8 +163,28 @@
   word-break: break-word;
 }
 
+/* 窄屏精简模式（<960px）：桌面 26px 波形轨道收起为贴边 4px 细条，只保留位置感知——
+   当前轮刻度加高加亮作为进度指示，其余刻度为均匀小点；预览气泡关闭（触摸 tooltip
+   不可靠），导航点击仍由 .frame 的 14px 命中带承担。桌面 ≥960px 规则完全不变。 */
 @media (max-width: 960px) {
-  .slot {
-    display: none !important;
+  .frame {
+    right: 2px;
+    width: 14px;
+  }
+  .mark {
+    width: 4px;
+  }
+  .tick {
+    width: 3px !important;
+    height: 3px !important;
+    border-radius: 2px;
+  }
+  .mark[aria-current=true] .tick {
+    height: 12px !important;
+    opacity: 1 !important;
+    background-color: var(--dsw-alias-label-primary) !important;
+  }
+  .preview {
+    display: none;
   }
 }

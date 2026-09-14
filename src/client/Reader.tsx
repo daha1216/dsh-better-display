@@ -1,6 +1,6 @@
 import type {} from '@deepseek-ai/dsh-session-turn-outline/types';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { CSSProperties, ReactNode, RefObject } from 'react';
 import type { ChatConversationViewNode, ChatNode, ChatNodeKind } from '@deepseek-ai/dsh-client-ui-chat/client';
 import { JsonBlock, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives';
 import { BlockBoundary, Blocks, contentBlocks, CopyAnswer, UserMessageActions } from './Blocks.js';
@@ -17,13 +17,25 @@ import { landTurn, scrollerOf } from './conversation-scroll.js';
 import { mergeTimelineItems, type TimelineItem } from './timeline.js';
 import type { ReaderGroup, TurnBoundary } from './projection.js';
 import type { BlockRenderProps, ReaderProps } from './types.js';
-import { computeShadowPlan, readRetraceConfig, type RetraceShadowPlan } from './retrace.js';
+import { computeShadowPlan, originalInputPreview, readRetraceConfig, shadowPlanSignature, shadowedRecordSummaries, writeRetraceConfig, type RetraceConfig, type RetraceShadowPlan, type ShadowedRecordSummary } from './retrace.js';
+import { READER_DENSITY_OPTIONS, READER_FONT_OPTIONS, READER_LINE_WIDTH_OPTIONS, normalizeDensity, normalizeFontSize, normalizeLineWidth, readerFontMode, readerSettingVars, type ReaderDensity, type ReaderFontSize, type ReaderLineWidth } from './reader-settings.js';
+import { formatMessageClock } from './message-chrome.js';
 import css from './Reader.module.css';
 import { markdownLabels, truncatedJsonLabel } from './primitive-labels.js';
 
 function isNode<K extends ChatNodeKind>(node: ChatConversationViewNode, kind: K): node is ChatNode<K> {
   return node.kind === kind;
 }
+
+/**
+ * Version reported through `data-dsh-better-display`.
+ *
+ * Bump rule: this constant and its companion literal in `lib/client.js`
+ * (search `READER_DISPLAY_VERSION`) are the only two places carrying the
+ * displayed version. `package.json["version"]` stays the package source of
+ * truth and is bumped alongside them.
+ */
+const READER_DISPLAY_VERSION = '0.2.0';
 
 function cleanErrorMessage(raw: string | undefined): string {
   if (!raw) return '模型服务暂时无响应或连接中断，请稍后重试。';
@@ -44,6 +56,104 @@ function cleanErrorMessage(raw: string | undefined): string {
 type SeatProps = BlockRenderProps & Pick<ReaderProps, 'useChat'> & {
   nodeKey: string; boundary: TurnBoundary; pinned?: boolean; processOpen?: boolean;
 };
+
+interface ReaderSettingsProps {
+  fontSize: ReaderFontSize;
+  lineWidth: ReaderLineWidth;
+  density: ReaderDensity;
+  motionPreference: boolean;
+  motionActive: boolean;
+  retrace: RetraceConfig;
+  onFontSize: (value: ReaderFontSize) => void;
+  onLineWidth: (value: ReaderLineWidth) => void;
+  onDensity: (value: ReaderDensity) => void;
+  onMotion: (value: boolean) => void;
+  onRetrace: (patch: Partial<RetraceConfig>) => void;
+}
+
+/**
+ * Toolbar popover collecting every reading preference (font / width / density,
+ * retrace display, motion). Follows the TurnMetrics dismiss contract: outside
+ * pointerdown or Escape closes it. Retrace switches write through
+ * `writeRetraceConfig` so dsh-retrace's own settings UI sees the same block.
+ */
+const ReaderSettings = memo(function ReaderSettings({
+  fontSize, lineWidth, density, motionPreference, motionActive, retrace,
+  onFontSize, onLineWidth, onDensity, onMotion, onRetrace,
+}: ReaderSettingsProps) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const segmented = <T extends string | number,>(
+    label: string,
+    options: readonly { value: T; label: string }[],
+    current: T,
+    onSelect: (value: T) => void,
+  ) => <div className={css.settingsRow}>
+    <span className={css.settingsLabel}>{label}</span>
+    <div className={css.settingsSegmented} role="group" aria-label={label}>
+      {options.map(option => <button key={String(option.value)} type="button" className={css.settingsSegment}
+        data-active={option.value === current} aria-pressed={option.value === current}
+        onClick={() => onSelect(option.value)}>{option.label}</button>)}
+    </div>
+  </div>;
+
+  return <div ref={containerRef} className={css.settings}>
+    <button type="button" className={css.textButton} aria-haspopup="dialog" aria-expanded={open}
+      data-open={open} onClick={() => setOpen(value => !value)}
+      title="阅读设置：正文字号、行宽、轮间距、动效与撤回展示">
+      <svg className={css.settingsIcon} viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true">
+        <circle cx="8" cy="8" r="2.2" strokeWidth="1.2" />
+        <path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+      <span>阅读设置</span>
+    </button>
+    {open && <div className={css.settingsPop} role="dialog" aria-label="阅读设置">
+      <div className={css.settingsGroup}>
+        <div className={css.settingsGroupTitle}>阅读本体</div>
+        {segmented('正文字号', READER_FONT_OPTIONS, fontSize, onFontSize)}
+        {segmented('行宽', READER_LINE_WIDTH_OPTIONS, lineWidth, onLineWidth)}
+        {segmented('轮间距', READER_DENSITY_OPTIONS, density, onDensity)}
+      </div>
+      <div className={css.settingsGroup}>
+        <div className={css.settingsGroupTitle}>撤回展示</div>
+        <label className={css.settingsSwitch}>
+          <input type="checkbox" checked={retrace.showOriginalInput} onChange={event => onRetrace({ showOriginalInput: event.target.checked })} />
+          <span>显示编辑前的原文</span>
+        </label>
+        <label className={css.settingsSwitch}>
+          <input type="checkbox" checked={retrace.hideShadowed} onChange={event => onRetrace({ hideShadowed: event.target.checked })} />
+          <span>隐藏被撤出的记录</span>
+        </label>
+      </div>
+      <div className={css.settingsGroup}>
+        <div className={css.settingsGroupTitle}>动效</div>
+        <label className={css.settingsSwitch}>
+          <input type="checkbox" checked={motionPreference} onChange={event => onMotion(event.target.checked)} />
+          <span>新到文字柔和显现</span>
+        </label>
+        {motionPreference && !motionActive && <p className={css.settingsNote}>系统已开启“减少动态效果”，实际按关闭生效。</p>}
+      </div>
+    </div>}
+  </div>;
+});
+
 
 /** Facts shared by every reader row so retrace shadowing stays consistent. */
 interface RetraceRowProps {
@@ -163,7 +273,86 @@ const CompactionDivider = memo(function CompactionDivider({ data }: {
   );
 });
 
-const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, processOpen = false, shadow, ...render }: SeatProps & RetraceRowProps) {
+/** Field-wise equality keeps the selector's array identity stable across unrelated store updates. */
+function sameShadowedRecords(a: readonly ShadowedRecordSummary[], b: readonly ShadowedRecordSummary[]): boolean {
+  return a.length === b.length && a.every((record, index) => {
+    const other = b[index];
+    return record.seq === other.seq && record.time === other.time && record.resolved === other.resolved && record.text === other.text;
+  });
+}
+
+/**
+ * Recall/edit/regenerate marker. The collapsed row keeps the existing single
+ * line; when the marker shadowed rows that are still addressable, the whole
+ * line becomes a disclosure listing each recalled record (seq + time + a
+ * two-line summary) from the live node store.
+ */
+const RecallMarkerNotice = memo(function RecallMarkerNotice({ useChat, data, degraded }: {
+  useChat: ReaderProps['useChat'];
+  data: { op?: unknown; compact?: boolean; shadowedSeqs?: unknown } | undefined;
+  degraded: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const seqs = useMemo(
+    () => (Array.isArray(data?.shadowedSeqs) ? data.shadowedSeqs.filter((value): value is number => typeof value === 'number') : []),
+    [data],
+  );
+  // Recalled rows stay in the store as an audit trail (only the render is
+  // shadowed), so their previews are resolved live; the comparator above keeps
+  // the array identity stable while unrelated node content streams in.
+  const records = useChat(snapshot => shadowedRecordSummaries(snapshot.nodes, seqs), sameShadowedRecords);
+  const label = data?.op === 'edit' ? '此处编辑重发' : data?.op === 'regenerate' ? '此处重新生成' : '此前的消息已撤回';
+  const count = seqs.length > 0 ? `（${seqs.length} 条记录已撤出上下文）` : '';
+  const expandable = records.length > 0;
+  const expanded = open && expandable;
+  const text = `${label}${count}${degraded ? '（涉及范围过大，阅读页保留原文显示）' : ''}`;
+  return <div className={css.notice}>
+    {expandable
+      ? <button type="button" className={css.recallToggle} onClick={() => setOpen(value => !value)}
+        aria-expanded={expanded} title={expanded ? '收起撤回记录' : '展开查看被撤出的记录'}>
+        <span className={css.recallToggleLabel}>{text}</span>
+        <svg className={css.chevron} data-open={expanded} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+      </button>
+      : <span>{text}</span>}
+    {expanded && <ol className={css.recallRecords}>
+      {records.map(record => <li key={record.seq} className={css.recallRecord} data-resolved={record.resolved}>
+        <span className={css.recallRecordMeta}>
+          <span className={css.recallRecordSeq}>#{record.seq}</span>
+          {record.time !== null && <time className={css.recallRecordTime} dateTime={new Date(record.time).toISOString()}>{formatMessageClock(record.time)}</time>}
+        </span>
+        <span className={css.recallRecordText} title={record.resolved && record.text.length > 0 ? record.text : undefined}>
+          {record.resolved ? record.text || '（无文本内容）' : '已不可寻址'}
+        </span>
+      </li>)}
+    </ol>}
+  </div>;
+});
+
+/**
+ * Pre-edit original reference. Folded by default to the title plus a one-line
+ * preview; the header discloses the full text with a grid-rows height
+ * transition (the repo's established disclosure motion) and direct toggling
+ * under reduced motion.
+ */
+const OriginalInputReference = memo(function OriginalInputReference({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const preview = useMemo(() => originalInputPreview(text), [text]);
+  return <div className={css.originalInput} data-reader-anchor data-open={open}>
+    <button type="button" className={css.originalInputHeader} onClick={() => setOpen(value => !value)}
+      aria-expanded={open} title={open ? '收起原文' : '展开查看编辑前的原文'}>
+      <span className={css.originalInputLabel}>编辑前的原文</span>
+      {!open && <span className={css.originalInputPreview}>{preview}</span>}
+      <svg className={css.chevron} data-open={open} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+    </button>
+    <div className={css.originalInputReveal} data-open={open} aria-hidden={!open} {...(!open ? { inert: '' } : {})}>
+      <div className={css.originalInputRevealInner}>
+        <div className={css.originalInputBody}>{text}</div>
+      </div>
+    </div>
+  </div>;
+});
+
+const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, processOpen = false, shadow, retraceConfig, ...render }: SeatProps & RetraceRowProps & { retraceConfig: RetraceConfig }) {
   const node = useChat(snapshot => snapshot.nodes.get(nodeKey));
   if (!node || node.visibility === 'hidden' || shadow.hiddenKeys.has(nodeKey)) return null;
   if (isNode(node, 'user') || isNode(node, 'steering')) {
@@ -231,17 +420,12 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
   }
   if (isNode(node, 'compaction')) return <CompactionDivider data={node.data} />;
   if (node.kind === 'recall-marker') {
-    const data = node.data as { op?: string; compact?: boolean; shadowedSeqs?: unknown[] } | undefined;
+    const data = node.data as { op?: unknown; compact?: boolean; shadowedSeqs?: unknown } | undefined;
     if (data?.compact || data?.op === 'compaction') return null;
-    const label = data?.op === 'edit' ? '此处编辑重发' : data?.op === 'regenerate' ? '此处重新生成' : '此前的消息已撤回';
-    const count = Array.isArray(data?.shadowedSeqs) && data.shadowedSeqs.length > 0
-      ? `（${data.shadowedSeqs.length} 条记录已撤出上下文）`
-      : '';
-    const degraded = shadow.degradedMarkerKeys.has(nodeKey);
-    return <div className={css.notice}>{label}{count}{degraded ? '（涉及范围过大，阅读页保留原文显示）' : ''}</div>;
+    return <RecallMarkerNotice useChat={useChat} data={data} degraded={shadow.degradedMarkerKeys.has(nodeKey)} />;
   }
   if (node.kind === 'retrace-reference') {
-    if (!readRetraceConfig().showOriginalInput) return null;
+    if (!retraceConfig.showOriginalInput) return null;
     const data = node.data as { text?: unknown; seq?: unknown } | undefined;
     // Retrace publishes the pre-edit original on the `edit` recall-marker, not on
     // this reference node: the reference payload carries the referenced message's
@@ -253,10 +437,7 @@ const MainNode = memo(function MainNode({ useChat, nodeKey, boundary, pinned, pr
       ? data.text
       : (ownSeq === null ? null : shadow.editOriginalTexts.get(ownSeq) ?? null);
     if (typeof text !== 'string' || text.length === 0) return null;
-    return <div className={css.originalInput} data-reader-anchor>
-      <span className={css.originalInputLabel}>编辑前的原文</span>
-      <div className={css.originalInputBody}>{text}</div>
-    </div>;
+    return <OriginalInputReference text={text} />;
   }
   if (node.kind === 'context' || node.kind === 'turn-tail' || node.kind === 'system-prompt' || node.kind === 'turn-process' || node.kind === 'user-actions') return null;
   return <div className={css.unknown} data-reader-anchor>
@@ -461,8 +642,8 @@ function DeliverablesRow({ deliverables, openFile, revealFile }: {
   );
 }
 
-const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedProcessKeys, shadow, ...props }: ReaderProps & RetraceRowProps & {
-  group: ReaderGroup; motion: boolean; pinnedKeys: readonly string[]; selectedProcessKeys: readonly string[];
+const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedProcessKeys, shadow, retraceConfig, ...props }: ReaderProps & RetraceRowProps & {
+  group: ReaderGroup; motion: boolean; pinnedKeys: readonly string[]; selectedProcessKeys: readonly string[]; retraceConfig: RetraceConfig;
 }) {
   const nodes = props.useChat(snapshot => snapshot.nodes);
   const turn = props.useChat(snapshot => group.turn === null ? undefined : snapshot.timeline.turns.get(group.turn));
@@ -522,7 +703,7 @@ const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedP
   // notice elsewhere in the stream already carries the recall information.
   if (group.keys.every(key => shadow.hiddenKeys.has(key))) return null;
   return <section className={css.turn} data-reader-turn={group.turn ?? 'unresolved'} data-reader-turn-state={boundary.status} data-reader-turn-result={boundary.reason ?? undefined}>
-    {startsWithUser && <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={group.keys[0]} shadow={shadow} /></BlockBoundary>}
+    {startsWithUser && <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={group.keys[0]} shadow={shadow} retraceConfig={retraceConfig} /></BlockBoundary>}
     {hasProcess && <Disclosure open={expanded} onChange={setExpanded} controls={flowId} buttonRef={processButton}
       label={<GroupStatus group={group} sessionId={props.sessionId} useChat={props.useChat} useSessionPendingInteraction={props.useSessionPendingInteraction} motion={motion} />} status={turn?.steps.length ? `${turn.steps.length} 个步骤` : undefined} />}
     {!hasProcess && boundary.status === 'open' && <div className={css.disclosure} data-reader-status-only>
@@ -532,7 +713,7 @@ const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedP
       {flow.map(item => item.kind === 'node' ? <Fragment key={item.key}>
         <BlockBoundary><ProcessNode useChat={props.useChat} t={props.t} nodeKey={item.nodeKey} open={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} shadow={shadow} /></BlockBoundary>
         <BlockBoundary><AssistantNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} shadow={shadow} /></BlockBoundary>
-        <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} shadow={shadow} /></BlockBoundary>
+        <BlockBoundary><MainNode {...shared} boundary={boundary} nodeKey={item.nodeKey} pinned={pinnedKeys.includes(item.nodeKey)} processOpen={expanded} shadow={shadow} retraceConfig={retraceConfig} /></BlockBoundary>
       </Fragment> : <Fragment key={item.key}>
         <BlockBoundary><ProcessFragment open={expanded} motion={motion} onRead={pinProcess} returnFocusTo={processButton} nodeKey={item.key} framed>
           <ToolActivity {...shared} entry={item} motion={motion} turnClosed={boundary.status === 'closed'} onRead={pinProcess} />
@@ -544,6 +725,12 @@ const TurnGroup = memo(function TurnGroup({ group, motion, pinnedKeys, selectedP
     {showTerminalNotice && <div className={css.notice} data-reader-terminal>{terminal}</div>}
   </section>;
 });
+
+/** Root margin that leaves only the band above the 35% reading line observable. */
+function readingLineBand(scroller: HTMLElement): string {
+  const height = scroller.clientHeight || window.innerHeight;
+  return `0px 0px ${-(height - height * 0.35)}px 0px`;
+}
 
 export function Reader(props: ReaderProps) {
   const root = useRef<HTMLDivElement>(null);
@@ -559,14 +746,30 @@ export function Reader(props: ReaderProps) {
   const pendingSubmissions = props.useSession(snapshot => snapshot.pendingSubmissions);
   const motionPreference = props.useStore(state => state.motion);
   const motion = useMotionAllowed(motionPreference);
+  const fontSize = normalizeFontSize(props.useStore(state => state.fontSize));
+  const lineWidth = normalizeLineWidth(props.useStore(state => state.lineWidth));
+  const density = normalizeDensity(props.useStore(state => state.density));
+  const settingVars = useMemo(() => readerSettingVars({ fontSize, lineWidth, density }), [fontSize, lineWidth, density]);
+  // dsh-retrace config lives in localStorage (shared with the retrace plugin),
+  // not in this store, so the popover edits keep a React copy for immediate
+  // re-render and write straight back to `dsh-retrace:config`.
+  const [retraceConfig, setRetraceConfig] = useState(readRetraceConfig);
+  const onRetraceConfig = useCallback((patch: Partial<RetraceConfig>) => {
+    setRetraceConfig(writeRetraceConfig(patch));
+  }, []);
+  const onFontSize = useCallback((value: ReaderFontSize) => props.actions.setFontSize(value), [props.actions]);
+  const onLineWidth = useCallback((value: ReaderLineWidth) => props.actions.setLineWidth(value), [props.actions]);
+  const onDensity = useCallback((value: ReaderDensity) => props.actions.setDensity(value), [props.actions]);
+  const onMotion = useCallback((value: boolean) => props.actions.setMotion(value), [props.actions]);
   const streamMotion = useMemo(() => ({ enabled: motion, activatedAt: activatedAt.current }), [motion]);
   const groups = useMemo(() => groupNodes(order, key => nodes.get(key)), [order, nodes, timeline]);
   // dsh-retrace interop: the shadow plan keeps recalled rows out of the reading
   // flow. The node store itself is reference-stable while content hydrates, so
-  // the memo also keys on the order length to recompute once conversation
-  // nodes materialize.
-  const retraceNodeCount = order.length;
-  const shadow = useMemo(() => computeShadowPlan(nodes, readRetraceConfig()), [nodes, retraceNodeCount]);
+  // the memo keys on a payload signature of the nodes it reads instead: the
+  // plan then recomputes when hydration fills a marker/user payload in, and
+  // stays untouched while unrelated node content (streaming answer text) grows.
+  const shadowSignature = props.useChat(snapshot => shadowPlanSignature(snapshot.nodes));
+  const shadow = useMemo(() => computeShadowPlan(nodes, retraceConfig), [nodes, shadowSignature, retraceConfig]);
   const scroll = useReadingScroll(root, motion);
   const pinnedKeys = usePinnedSelection(root);
   const selectedProcessKeys = usePinnedSelection(root, '[data-reader-process]');
@@ -598,42 +801,85 @@ export function Reader(props: ReaderProps) {
   const [activeTurn, setActiveTurn] = useState<number | null>(null);
   const [busyTurn, setBusyTurn] = useState<number | null>(null);
 
-  // Scroll spy to update activeTurn
+  // Scroll spy to update activeTurn.
+  // A single IntersectionObserver over the band above the reading line replaces
+  // the old per-frame querySelectorAll + getBoundingClientRect pass: a turn
+  // intersects `[scrollTop, line]` exactly while its top sits above the 35%
+  // line, so the highest turn in the set is the one the old loop returned (and
+  // the first turn is the fallback when the set is empty — i.e. before the
+  // first turn reaches the line).
   useEffect(() => {
     const el = root.current;
     if (!el) return;
-    const scroller = el.closest('[data-conversation-scroll]') ?? el;
+    const scroller = scrollerOf(el);
+    const rowsOf = () => Array.from(el.querySelectorAll<HTMLElement>('[data-reader-turn]:not([data-reader-turn="unresolved"])'));
+    const visible = new Set<HTMLElement>();
+    const observed = new Set<HTMLElement>();
+    let current: number | null = null;
 
-    let ticking = false;
-    const updateActive = () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        ticking = false;
-        const line = (scroller instanceof HTMLElement ? scroller.clientHeight : window.innerHeight) * 0.35;
-        const turnRows = el.querySelectorAll<HTMLElement>('[data-reader-turn]:not([data-reader-turn="unresolved"])');
-        let current: number | null = null;
-        for (const row of turnRows) {
-          const rect = row.getBoundingClientRect();
-          if (rect.top <= line) {
-            const num = Number(row.dataset.readerTurn);
-            if (Number.isSafeInteger(num)) current = num;
-          } else {
-            break;
-          }
-        }
-        if (current !== null) {
-          setActiveTurn(current);
-        } else if (turnRows.length > 0) {
-          const first = Number(turnRows[0].dataset.readerTurn);
-          if (Number.isSafeInteger(first)) setActiveTurn(first);
-        }
-      });
+    const commit = () => {
+      let best: number | null = null;
+      for (const row of visible) {
+        const num = Number(row.dataset.readerTurn);
+        if (Number.isSafeInteger(num) && (best === null || num > best)) best = num;
+      }
+      if (best === null) {
+        const first = Number(rowsOf()[0]?.dataset.readerTurn);
+        if (!Number.isSafeInteger(first)) return;
+        best = first;
+      }
+      if (best !== current) {
+        current = best;
+        setActiveTurn(best);
+      }
     };
 
-    scroller.addEventListener('scroll', updateActive, { passive: true });
-    updateActive();
-    return () => scroller.removeEventListener('scroll', updateActive);
+    // Negative bottom margin shrinks the viewport root to the detection band
+    // [0, line]; the band depends on viewport height, so it is rebuilt on resize.
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const row = entry.target as HTMLElement;
+        if (entry.isIntersecting) visible.add(row);
+        else visible.delete(row);
+      }
+      commit();
+    }, { root: scroller, rootMargin: readingLineBand(scroller) });
+
+    const observeRows = () => {
+      const next = new Set(rowsOf());
+      for (const row of next) {
+        if (observed.has(row)) continue;
+        observed.add(row);
+        observer.observe(row);
+      }
+      let pruned = false;
+      for (const row of observed) {
+        if (next.has(row)) continue;
+        observer.unobserve(row);
+        visible.delete(row);
+        observed.delete(row);
+        pruned = true;
+      }
+      // Additions are reported by the observer's initial observation pass; only
+      // a removal changes the set without a callback. Committing synchronously on
+      // every (re)subscribe would briefly fall back to the first turn while the
+      // initial pass is still in flight.
+      if (pruned) commit();
+    };
+
+    observeRows();
+
+    const resize = new ResizeObserver(() => {
+      if (observer.rootMargin === readingLineBand(scroller)) return;
+      observer.disconnect();
+      visible.clear();
+      for (const row of observed) observer.observe(row);
+    });
+    resize.observe(scroller);
+    return () => {
+      observer.disconnect();
+      resize.disconnect();
+    };
   }, [groups]);
 
   // Navigation handler (supports loaded jump & unloaded loadThrough).
@@ -696,12 +942,13 @@ export function Reader(props: ReaderProps) {
     return pendingSubmissions.filter(sub => sub.placement !== 'queued');
   }, [pendingSubmissions]);
 
-  return <StreamMotionContext.Provider value={streamMotion}><div ref={root} className={css.root} data-dsh-better-display="0.1.0" data-motion={motion ? 'on' : 'off'}>
+  return <StreamMotionContext.Provider value={streamMotion}><div ref={root} className={css.root} style={settingVars as CSSProperties} data-dsh-better-display={READER_DISPLAY_VERSION} data-motion={motion ? 'on' : 'off'} data-reading-font={readerFontMode(fontSize)}>
     <TimelineRail items={timelineItems} activeTurn={activeTurn} busyTurn={busyTurn} onNavigate={onNavigateTurn} />
     <div className={css.column}>
       <div className={css.toolbar} data-ud-check="reader-toolbar">
         <span title="基于真实消息类型和轮次边界整理。当前协议没有独立的正文阶段标记，无法确认的内容会继续保留。">阅读 · 原始记录完整保留</span>
-        <button type="button" className={css.textButton} aria-pressed={motionPreference} onClick={() => props.actions.setMotion(!motionPreference)} title="新到文字柔和显现，过程平滑展开；关闭后立即完整显示，自动遵循系统减少动态效果设置。">{motionPreference && !motion ? '动效 · 跟随系统关闭' : `动效${motionPreference ? '开' : '关'}`}</button>
+        <ReaderSettings fontSize={fontSize} lineWidth={lineWidth} density={density} motionPreference={motionPreference} motionActive={motion} retrace={retraceConfig}
+          onFontSize={onFontSize} onLineWidth={onLineWidth} onDensity={onDensity} onMotion={onMotion} onRetrace={onRetraceConfig} />
       </div>
       {hasMore && <button type="button" className={css.historyButton} disabled={loadingOlder} onClick={async () => {
         setHistoryError(false);
@@ -710,7 +957,7 @@ export function Reader(props: ReaderProps) {
       {historyError && <div className={css.notice}>历史记录加载失败，可再次尝试；现有内容未改变。</div>}
       {openError && <div className={css.error} role="alert">会话暂时无法读取：{openError.message}</div>}
       {loading && groups.length === 0 && <p className={css.empty} role="status">正在读取会话…</p>}
-      {groups.map(group => <TurnGroup key={group.key} {...props} group={group} motion={motion} pinnedKeys={pinnedKeys} selectedProcessKeys={selectedProcessKeys} shadow={shadow} />)}
+      {groups.map(group => <TurnGroup key={group.key} {...props} group={group} motion={motion} pinnedKeys={pinnedKeys} selectedProcessKeys={selectedProcessKeys} shadow={shadow} retraceConfig={retraceConfig} />)}
       {visibleSubmissions.map(submission => (
         <div key={submission.requestId} className={css.userCluster} data-reader-pending-submission>
           {submission.attachments.some(item => item.type === 'image') && (
