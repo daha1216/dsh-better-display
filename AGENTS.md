@@ -21,8 +21,9 @@
 
 ## 2. lib/client.js 手改规则
 
-- 文件是各模块按 `//#region src/client/...` 拼接的产物。常用锚点（用函数名搜索，行号会漂移）：
-  `UserMessageActions`、`MainNode`、`cleanErrorMessage`、`Reader()`、`computeShadowPlan` / `retraceHiddenKeysFor`（`src/client/retrace.ts`）。
+- 文件是各模块按 `//#region src/client/...` 拼接的产物（bundle 内共 126 处 `//#region`，其中 35 处是 `src/client/`；`retrace.ts` 段约 47434 行起）。常用锚点（用函数名搜索，行号会漂移）：
+  `UserMessageActions`（`Blocks.tsx`）、`MainNode` / `cleanErrorMessage` / `Reader()`（`Reader.tsx`）、`computeShadowPlan` / `readRetraceConfig` / `RETRACE_PSEUDO_KINDS`（`src/client/retrace.ts`）。
+  **注意 src 名与 bundle 名可能不同**：shadow 相关的 bundle 名是 `retraceHiddenKeysFor` / `retraceEditOriginalTextsFor`（后者 v0.1.5 新增，把 `edit` marker 映射到其后第一条用户消息的原文），src 侧对等私有名是 `hiddenKeysFor` / `editOriginalTextsFor`；src 的 `PSEUDO_KINDS` 在 bundle 里叫 `RETRACE_PSEUDO_KINDS`。在 src 里搜不到 `retrace*` 前缀是正常的，别以为丢了。
 - **CSS Module 的编译形态**：`src/client/Reader.module.css` 编译成两处，改样式两边都要动：
   1. `const css$4 = "...";`（搜 `g2GnNq_root`）——压缩后的 CSS 全文；新规则追加到字符串末尾即可（同名后置规则会覆盖前者）。
   2. `Reader_module_css_default = { "类名": "g2GnNq_类名", ... }`——class map；新类名必须在这里注册，组件里用 `Reader_module_css_default.类名` 引用，否则 undefined。
@@ -43,19 +44,21 @@
 | 底色 | `--dsw-alias-bg-base / -elevated / -module-platform` |
 | 用户气泡 | `--dsw-specific-bubble` |
 
-用户消息操作行（`Reader.tsx` 的 `MainNode` user 分支 → `Blocks.tsx` 的 `UserMessageActions`）：`.userActions`（flex、min-height 28px、gap 8px）一行内只有 messageClock · 复制 iconButton（`aria-label="复制消息"`）· 复制回执 meta。**编辑/撤回 chips、内联编辑器、报错不在这里**——它们由 dsh-retrace 的阅读页注入器挂到复制按钮所在行和消息簇末尾（详见其 AGENTS.md 第 3 节）。触屏规范：`@media (pointer:coarse)` 下交互钮最小 44px；已有容器查询 `@container (width<=420px / 480px)`。
+用户消息操作行（`Reader.tsx` 的 `MainNode` user 分支 → `Blocks.tsx` 的 `UserMessageActions`）：`.userActions`（flex、min-height 28px、gap 8px；`Reader.module.css` 约 229 行）一行内只有 messageClock · 复制 iconButton（`aria-label="复制消息"`）· 复制回执 meta。**编辑/撤回 chips、内联编辑器、报错不在这里**——它们由 dsh-retrace 的阅读页注入器挂到复制按钮所在行和消息簇末尾（详见其 AGENTS.md 第 3 节）。触屏规范：`@media (pointer:coarse)` 下交互钮最小 44px（如 `.disclosureButton`/`.reasonAction`）；已有容器查询 `@container (width<=420px / 480px)`（bundle 压缩写法，src 写作 `@container (max-width: 420px / 480px)`）。
 
 ## 4. 展示职责与锚点契约（与 dsh-retrace 的分工）
 
 本仓库只做纯展示；撤回操作 UI（编辑/撤回 chips、两步确认、内联编辑器、报错行）全部由 **dsh-retrace** 负责，并在阅读页通过 DOM 注入自行挂载。本仓库保留的展示能力：
 
-- **shadow 行隐藏**：`computeShadowPlan` / `retraceHiddenKeysFor`（`src/client/retrace.ts`），按 recall-marker 的 `shadowedSeqs` 算出要隐藏的 node key；`RETRACE_PSEUDO_KINDS` 覆盖 `user-actions` / `retrace-reference` / `recall-marker` 等伪节点。
+- **shadow 行隐藏**：`computeShadowPlan` / `retraceHiddenKeysFor`（bundle 名；`src/client/retrace.ts`，src 侧对等私有名 `hiddenKeysFor`），按 recall-marker 的 `shadowedSeqs` 算出要隐藏的 node key；`RETRACE_PSEUDO_KINDS`（src 名 `PSEUDO_KINDS`）覆盖 `user-actions` / `retrace-reference` / `recall-marker` 等伪节点。
 - **撤回标记**：recall-marker 节点的展示。
-- **原文引用块**：`retrace-reference` 节点 → `.originalInput*`（`g2GnNq_originalInput` 等），标题「编辑前的原文」。原文文本取自 `op === 'edit'` 的 recall-marker 的 `data.text`（经 `retraceEditOriginalTextsFor` 映射到 marker 之后的第一条用户消息，与 retrace 对话页 `useEditReference` 语义一致）；显式 `data.text` 优先（旧/他方契约），**不读** `data.content`（那是消息自身当前正文，读了会让每条消息都长出原文块）。
+- **原文引用块**：`retrace-reference` 节点 → `.originalInput*`（`g2GnNq_originalInput`，来源 `src/client/Reader.module.css` 约 275 行的 `.originalInput`/`.originalInputLabel`/`.originalInputBody`；bundle 里同样两处：压缩 CSS 串 `css$4` 末尾 + `Reader_module_css_default` class map 注册），标题「编辑前的原文」，受 `readRetraceConfig().showOriginalInput` 开关控制。原文文本取自 `op === 'edit'` 的 recall-marker 的 `data.text`（经 `retraceEditOriginalTextsFor` 映射到 marker 之后的第一条用户消息，与 retrace 对话页 `useEditReference` 语义一致）；显式 `data.text` 优先（旧/他方契约），**不读** `data.content`（那是消息自身当前正文，读了会让每条消息都长出原文块）。
 
 **锚点契约（不可移除）**：`Reader.tsx` 的 `MainNode` user 分支在用户消息簇上输出 `data-reader-anchor data-reader-key={nodeKey}`；dsh-retrace 的阅读页注入器**只靠这两个属性**定位消息簇（再找 `button[aria-label="复制消息"]` 所在行插 chips）。本仓库自己的 motion/滚动定位也依赖 `data-reader-anchor`。**移除或改名这两个属性会同时打断两边的功能**，改之前先与 retrace 侧对齐。
 
 ## 5. 部署与验证闭环
+
+**当前版本**：v0.1.5（HEAD `a365173`）。
 
 ```sh
 # 1) bump package.json version，三关检查：
@@ -63,12 +66,18 @@ node --check lib/client.js
 node --import tsx/esm --test tests/*.test.ts
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit   # link 脚本见第 1 节
 # 2) commit + push origin main
-# 3) 停服务 → 更新插件 → 重启：
+# 3) 停服务
 powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/daha/.dsh/stop-dsh-web.ps1
+# 4) 更新插件（本仓 spec 未钉 commit，update 会重新解析 main HEAD）
 cd C:/Users/daha/.dsh && HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 dsh plugin --profile web update dsh-better-display
+# 5) 重启
 powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/daha/.dsh/launch-deepseek-harness.ps1 -NoOpen
 ```
 
-- profile 依赖是 `github:daha1216/dsh-better-display`（未钉 commit，解析 main HEAD），所以**必须先 push 再 update**。
-- 插件 bundle 走 `rev` 缓存：更新后浏览器旧标签要刷新一次才是新代码。
+6. 浏览器**硬刷新**旧标签页（Ctrl+Shift+R）——插件 bundle 走 `rev` 缓存，普通刷新/F5 可能仍拿旧代码。
+7. 在「阅读」tab 验证本次展示改动（shadow 隐藏 / 撤回标记 / 原文引用块）。**若异常出现在 chips、内联编辑器、报错行上，那不是本仓库的问题**——那些是 dsh-retrace 的 DOM 注入，去改它的 `.dsh-rt-*`（见其 AGENTS.md 第 3 节）；本仓库对它零引用。
+
+- profile 依赖是 `github:daha1216/dsh-better-display`（未钉 commit，解析 main HEAD），所以**必须先 push 再 update**；dsh-retrace 则是钉死 commit、必须 `add` 重钉，别把两仓流程搞混。
+- 拉 GitHub 必须带代理：`HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890`。
+- 停服/重启脚本路径：`C:/Users/daha/.dsh/stop-dsh-web.ps1`、`C:/Users/daha/.dsh/launch-deepseek-harness.ps1 -NoOpen`。
 - E2E 习惯：role 定位器在本应用常超时，用 `tab.playwright.evaluate()` + `dispatchEvent(new MouseEvent("click",{bubbles:true}))`；输入框用 React 原生 value setter + `input` 事件（execCommand 对 textarea 不可靠）。
