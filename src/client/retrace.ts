@@ -3,11 +3,12 @@ import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/c
 /**
  * Reading-view interop with the installed dsh-retrace plugin (0.4.x wire contract).
  *
- * The reader re-implements three small pieces of retrace's client instead of
- * importing its bundle: the localStorage preference block, the shadowed-row
- * hide plan, and the two host RPCs behind 编辑 / 撤回. Everything here is
- * defensive — when dsh-retrace is absent there are no `user-actions` nodes,
- * no markers, and the RPCs are simply never called.
+ * The reader re-implements the display-side pieces of retrace's client instead
+ * of importing its bundle: the localStorage preference block and the
+ * shadowed-row hide plan. Operation chips (编辑/撤回) are NOT rendered here —
+ * dsh-retrace 0.4.22+ injects its own ghost chips into the reader view.
+ * Everything here is defensive — when dsh-retrace is absent there are no
+ * `user-actions` nodes and no markers, so nothing changes.
  */
 
 export interface RetraceConfig {
@@ -138,36 +139,3 @@ export function computeShadowPlan(nodes: ChatNodes, config: RetraceConfig): Retr
   return { hiddenKeys, shadowedSeqs, degradedMarkerKeys };
 }
 
-/** seq → `user-actions` node payload, for pairing reader rows with retrace ops. */
-export function collectUserActionsIndex(nodes: ChatNodes): Map<number, { messageId?: string }> {
-  const index = new Map<number, { messageId?: string }>();
-  for (const node of nodes.values()) {
-    if (node.kind !== 'user-actions') continue;
-    const data = node.data as { seq?: unknown; messageId?: unknown } | undefined;
-    if (typeof data?.seq === 'number') index.set(data.seq, { messageId: typeof data.messageId === 'string' ? data.messageId : undefined });
-  }
-  return index;
-}
-
-export type RetraceOpResult =
-  | { ok: true; value?: Record<string, unknown> }
-  | { ok: false; error?: { code?: string; message?: string } };
-
-/** Same wire call retrace's own action row makes; never throws. */
-export async function callRetraceOp(op: 'recall' | 'editAndResend', payload: Record<string, unknown>): Promise<RetraceOpResult> {
-  const config = readRetraceConfig();
-  try {
-    const res = await fetch(`/api/plugins/retrace/${op}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-retrace-config': JSON.stringify({ versioning: config.versioning, git: config.git, retentionLimit: config.retentionLimit }),
-      },
-      body: JSON.stringify(payload),
-    });
-    if (res.status < 200 || res.status >= 300) return { ok: false, error: { message: `HTTP ${res.status}` } };
-    return await res.json() as RetraceOpResult;
-  } catch (error) {
-    return { ok: false, error: { message: error instanceof Error ? error.message : String(error) } };
-  }
-}

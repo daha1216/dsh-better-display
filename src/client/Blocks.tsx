@@ -189,10 +189,10 @@ export function CopyAnswer({ blocks, onFork, metrics }: { blocks: readonly Assis
   </div>;
 }
 
-export function UserMessageActions({ text, time, children }: { text: string; time?: number; children?: ReactNode }) {
+export function UserMessageActions({ text, time }: { text: string; time?: number }) {
   const { receipt, copy } = useCopyReceipt();
   const hasText = text.trim() !== '';
-  if (!hasText && time === undefined && children === undefined) return null;
+  if (!hasText && time === undefined) return null;
   return <div className={css.userActions}>
     {time !== undefined && <MessageClock time={time} />}
     {hasText && (
@@ -200,7 +200,6 @@ export function UserMessageActions({ text, time, children }: { text: string; tim
         <CopyGlyph />
       </button>
     )}
-    {children}
     <span role="status" className={css.meta}>{receipt}</span>
   </div>;
 }

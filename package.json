@@ -1,7 +1,7 @@
 {
   "name": "dsh-better-display",
-  "version": "0.1.3",
-  "description": "A calmer reading view for DeepSeek Harness: native process details, live reasoning, and clean final answers. (daha1216 fork: reading-view support for dsh-retrace — edit/recall chips, shadowed-row hiding)",
+  "version": "0.1.4",
+  "description": "A calmer reading view for DeepSeek Harness: native process details, live reasoning, and clean final answers. (daha1216 fork: reading-view display support for dsh-retrace — shadowed-row hiding, markers, and edit references)",
   "type": "module",
   "license": "MIT",
   "main": "lib/dsh-better-display.js",
