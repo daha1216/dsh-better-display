@@ -9,6 +9,7 @@ import { ToolActivity, ToolMedia } from './ToolActivity.js';
 import { preparingLabel, readerFlow } from './tool-activity.js';
 import { Disclosure, ProcessFragment, RetiringContent, StatusText, useMotionAllowed, usePinnedSelection, useReadingScroll } from './motion.js';
 import { StreamMotionContext } from './streaming.js';
+import { submissionImages } from './submission-images.js';
 import { assistantSegments, boundaryOf, forkAnchorSeq, groupNodes, hasProcessContent, hasVisibleBody, isEarlierNarration, processChoiceKey, processExpanded, terminalLabel } from './projection.js';
 import { basename, createProducedFileMentions, dirname, getTurnDeliverables, showDeliverablesRow } from './deliverables.js';
 import { ContextInjectionRow } from './native/ContextInjectionRow.js';
@@ -958,17 +959,19 @@ export function Reader(props: ReaderProps) {
       {openError && <div className={css.error} role="alert">会话暂时无法读取：{openError.message}</div>}
       {loading && groups.length === 0 && <p className={css.empty} role="status">正在读取会话…</p>}
       {groups.map(group => <TurnGroup key={group.key} {...props} group={group} motion={motion} pinnedKeys={pinnedKeys} selectedProcessKeys={selectedProcessKeys} shadow={shadow} retraceConfig={retraceConfig} />)}
-      {visibleSubmissions.map(submission => (
+      {visibleSubmissions.map(submission => {
+        const images = submissionImages(submission);
+        return (
         <div key={submission.requestId} className={css.userCluster} data-reader-pending-submission>
-          {submission.attachments.some(item => item.type === 'image') && (
+          {images.length > 0 && (
             <div className={css.userImages}>
-              {submission.attachments.map((item, idx) => item.type === 'image' ? (
+              {images.map((image, idx) => (
                 <figure key={idx} className={css.imageFigure}>
-                  <div className={css.imageFrame} style={{ aspectRatio: `${item.value.width || 4} / ${item.value.height || 3}` }}>
-                    <img src={item.value.previewUrl} alt={item.value.name ?? '发送的图片'} className={css.pendingImage} />
+                  <div className={css.imageFrame} style={{ aspectRatio: `${image.width || 4} / ${image.height || 3}` }}>
+                    <img src={image.previewUrl} alt={image.name ?? '发送的图片'} className={css.pendingImage} />
                   </div>
                 </figure>
-              ) : null)}
+              ))}
             </div>
           )}
           {submission.text ? (
@@ -978,7 +981,8 @@ export function Reader(props: ReaderProps) {
           ) : null}
           <UserMessageActions text={submission.text} time={submission.time} />
         </div>
-      ))}
+        );
+      })}
       {pending !== undefined && <div className={css.attention} role="alert" data-reader-attention>
         <strong>{pending.kind === 'question' ? '需要你回答一个问题' : '需要你的确认'}</strong>
         <span>请在下方原生操作区处理。此提示不会收进执行过程。</span>
